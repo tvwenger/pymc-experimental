@@ -26,6 +26,7 @@ from pymc.testing import (
     BaseTestDistributionRandom,
     Domain,
     R,
+    Rplus,
     Rplusbig,
     assert_moment_is_expected,
     check_logcdf,
@@ -35,7 +36,7 @@ from pymc.testing import (
 )
 
 # the distributions to be tested
-from pymc_experimental.distributions import GenExtreme
+from pymc_experimental.distributions import Chi, GenExtreme
 
 
 class TestGenExtremeClass:
@@ -144,6 +145,62 @@ class TestGenExtreme(BaseTestDistributionRandom):
     # Notice, using different parametrization of xi sign to scipy
     reference_dist_params = {"loc": 0, "scale": 1, "c": 0.1}
     reference_dist = seeded_scipy_distribution_builder("genextreme")
+    tests_to_run = [
+        "check_pymc_params_match_rv_op",
+        "check_pymc_draws_match_reference",
+        "check_rv_size",
+    ]
+
+
+class TestChiClass:
+    """
+    Wrapper class so that tests of experimental additions can be dropped into
+    PyMC directly on adoption.
+    """
+
+    def test_logp(self):
+        check_logp(
+            Chi,
+            Rplus,
+            {"df": Rplus, "sigma": Rplusbig},
+            lambda value, df, sigma: sp.chi.logpdf(value, df=df, scale=sigma),
+        )
+
+    def test_logcdf(self):
+        check_logcdf(
+            Chi,
+            Rplus,
+            {"df": Rplus, "sigma": Rplusbig},
+            lambda value, df, sigma: sp.chi.logcdf(value, df=df, scale=sigma),
+        )
+
+    @pytest.mark.parametrize(
+        "df, sigma, size, expected",
+        [
+            (1, 1, None, np.sqrt(2.0 / np.pi)),
+            (2, 1, 5, np.full(5, np.sqrt(np.pi / 2.0))),
+            (3, 5, None, np.sqrt(2.0 / np.pi) * 2.0 * 5.0),
+            (
+                np.arange(1, 4),
+                1,
+                None,
+                np.array([np.sqrt(2.0 / np.pi), np.sqrt(np.pi / 2.0), 2.0 * np.sqrt(2.0 / np.pi)]),
+            ),
+            (1, 1, 5, np.full(5, np.sqrt(2.0 / np.pi))),
+        ],
+    )
+    def test_chi_moment(self, df, sigma, size, expected):
+        with pm.Model() as model:
+            Chi("x", df, sigma=sigma, size=size)
+        assert_moment_is_expected(model, expected)
+
+
+class TestChi(BaseTestDistributionRandom):
+    pymc_dist = Chi
+    pymc_dist_params = {"df": 1, "sigma": 1}
+    expected_rv_op_params = {"df": 1, "sigma": 1}
+    reference_dist_params = {"df": 1, "loc": 0, "scale": 1}
+    reference_dist = seeded_scipy_distribution_builder("chi")
     tests_to_run = [
         "check_pymc_params_match_rv_op",
         "check_pymc_draws_match_reference",

@@ -19,10 +19,11 @@ Experimental probability distributions for stochastic nodes in PyMC.
 The imports from pymc are not fully replicated here: add imports as necessary.
 """
 
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import pytensor.tensor as pt
+from pymc.distributions.continuous import PositiveContinuous
 from pymc.distributions.dist_math import check_parameters
 from pymc.distributions.distribution import Continuous
 from pymc.distributions.shape_utils import rv_size_is_none
@@ -216,3 +217,147 @@ class GenExtreme(Continuous):
         if not rv_size_is_none(size):
             mode = pt.full(size, mode)
         return mode
+
+
+class ChiRV(RandomVariable):
+    r"""
+    A chi continuous random variable.
+
+    The probability density function for `chi` in terms of its parameters
+    :math:`\nu`, :math:`\mu`, and :math:`\sigma` is:
+
+    .. math::
+        f(x; \nu, \sigma) = \frac{x^{k-1}e^{-x^2/(2\sigma^2)}}{2^{k/2-1}\sigma^{k}\Gamma(k/2)}
+
+    for :math:`x \geq 0`, :math:`\nu > 0`, and :math:`\sigma > 0`
+    """
+    name = "chi"
+    ndim_supp = 0
+    ndims_params = [0, 0]
+    dtype = "floatX"
+    _print_name = ("Chi", "\\operatorname{Chi}")
+
+    def __call__(self, df, scale, size=None, **kwargs):
+        r"""
+        Draw samples from a Chi distribution.
+
+        Signature
+        ---------
+        `(), () -> ()`
+
+        Parameters
+        ----------
+        df
+            Degrees of freedom :math:`\nu`. Must be positive.
+        scale
+            Scale parameter :math:`\sigma` of the distribution. Must be
+            positive.
+        size
+            Sample shape. If the given size is, e.g. `(m, n, k)` then `m * n * k`
+            independent, identically distributed random variables are
+            returned. Default is `None` in which case a single random variable
+            is returned.
+        """
+        return super().__call__(df, scale, size=size, **kwargs)
+
+    @classmethod
+    def rng_fn(
+        cls,
+        rng: Union[np.random.Generator, np.random.RandomState],
+        df: Union[np.ndarray, float],
+        scale: Union[np.ndarray, float],
+        size: Optional[Union[List[int], int]],
+    ) -> np.ndarray:
+        return stats.chi.rvs(df, scale=scale, size=size, random_state=rng)
+
+
+chi = ChiRV()
+
+
+class Chi(PositiveContinuous):
+    r"""
+    Univariate chi log-likelihood.
+
+    The pdf of this distribution is
+
+    .. math::
+        f(x; \nu, \sigma) = \frac{x^{k-1}e^{-x^2/(2\sigma^2)}}{2^{k/2-1}\sigma^{k}\Gamma(k/2)}
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import scipy.stats as st
+        import arviz as az
+        plt.style.use('arviz-darkgrid')
+        x = np.linspace(0, 10, 1000)
+        dfs = [1., 2., 3., 3.]
+        sigmas = [1., 1., 1., 3.]
+        for df, sigma in zip(dfs, sigmas):
+            pdf = st.chi.pdf(x, df=df, scale=sigma)
+            plt.plot(x, pdf, label=r'$\nu$ = {}, $\sigma$ = {}'.format(df, sigma))
+        plt.xlabel('x', fontsize=12)
+        plt.ylabel('f(x)', fontsize=12)
+        plt.legend(loc=1)
+        plt.show()
+
+    ========  =========================================================================
+    Support   :math:`x \in [0, \infty)`
+    Mean      :math:`\sqrt{2}\sigma\Gamma((\nu + 1)/2)/\Gammma(\nu/2)`
+    Variance  :math:`\sigma^2[\nu - 2\sigma^2(\Gamma(\nu+1/2)/\Gamma(\nu/2)^2)]`
+    ========  =========================================================================
+
+    Parameters
+    ----------
+    df : tensor_like of float
+        Degrees of freedom. (df > 0).
+    sigma : tensor_like of float
+        Scale parameter. (sigma > 0).
+
+    Examples
+    --------
+    .. code-block:: python
+        with pm.Model():
+            x = pm.Chi('x', 3, mu=2, sigma=5)
+    """
+    rv_op = chi
+
+    @classmethod
+    def dist(cls, df, sigma, **kwargs):
+        df = pt.as_tensor_variable(df)
+        sigma = pt.as_tensor_variable(sigma)
+        return super().dist([df, sigma], **kwargs)
+
+    def moment(rv, size, df, sigma):
+        df, sigma = pt.broadcast_arrays(df, sigma)
+        moment = pt.sqrt(2.0) * sigma * pt.gamma((df + 1.0) / 2.0) / pt.gamma(df / 2.0)
+        if not rv_size_is_none(size):
+            moment = pt.full(size, moment)
+        return moment
+
+    def logp(value, df, sigma):
+        df, sigma = pt.broadcast_arrays(df, sigma)
+        res = (
+            (df - 1.0) * pt.log(value)
+            - pt.pow((value) / sigma, 2) / 2.0
+            - (df / 2.0 - 1.0) * pt.log(2.0)
+            - pt.gammaln(df / 2.0)
+            - df * pt.log(sigma)
+        )
+        res = pt.switch(pt.gt(value, 0.0), res, -np.inf)
+        return check_parameters(
+            res,
+            [df > 0, sigma > 0],
+            msg="df > 0, sigma > 0",
+        )
+
+    def logcdf(value, df, sigma):
+        df, sigma = pt.broadcast_arrays(df, sigma)
+        res = pt.log(pt.gammainc(df / 2.0, pt.pow(value / sigma, 2) / 2.0))
+        res = pt.switch(pt.gt(value, 0.0), res, -np.inf)
+        return check_parameters(
+            res,
+            [df > 0, sigma > 0],
+            msg="df > 0, sigma > 0",
+        )
